@@ -2,11 +2,11 @@ metabolism	process	step	ko	ko_definition
 nitrogen	nitrification	ammonium oxidation	K16157	methane monooxygenase component A alpha chain [EC:1.14.13.25]
 nitrogen	nitrification	ammonium oxidation	K16158	methane monooxygenase component A beta chain [EC:1.14.13.25]
 nitrogen	nitrification	ammonium oxidation	K16159	methane monooxygenase component A gamma chain [EC:1.14.13.25]
-nitrogen		nitrate reduction (assimilatory)	K00360	assimilatory nitrate reductase electron transfer subunit [EC:1.7.99.-]
+nitrogen	assimilation	nitrate reduction (assimilatory)	K00360	assimilatory nitrate reductase electron transfer subunit [EC:1.7.99.-]
 nitrogen	denitrification	nitrate reduction	K00367	ferredoxin-nitrate reductase [EC:1.7.7.2]
 nitrogen	denitrification	nitrate reduction	K00370	nitrate reductase / nitrite oxidoreductase, alpha subunit [EC:1.7.5.1 1.7.99.-]
 nitrogen	denitrification	nitrate reduction	K00371	nitrate reductase / nitrite oxidoreductase, beta subunit [EC:1.7.5.1 1.7.99.-]
-nitrogen		nitrate reduction (assimilatory)	K00372	assimilatory nitrate reductase catalytic subunit [EC:1.7.99.-]
+nitrogen	assimilation	nitrate reduction (assimilatory)	K00372	assimilatory nitrate reductase catalytic subunit [EC:1.7.99.-]
 nitrogen	denitrification	nitrate reduction	K00374	nitrate reductase gamma subunit [EC:1.7.5.1 1.7.99.-]
 nitrogen	denitrification	nitrate reduction	K02567	nitrate reductase (cytochrome) [EC:1.9.6.1]
 nitrogen	denitrification	nitrate reduction	K02568	nitrate reductase (cytochrome), electron transfer subunit

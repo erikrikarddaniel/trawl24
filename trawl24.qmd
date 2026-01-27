@@ -1,5 +1,5 @@
 ---
-title: "__TITLE__"
+title: "TRAWL24 RNAseq preliminary analyses of nf-core/metatdenovo output"
 author: "matricaria.suaveolens@gmail.com"
 date: "`r format(Sys.time(), '%Y-%m-%d')`"
 format:
@@ -42,8 +42,7 @@ library(kfigr)
 library(knitr)
 library(grateful)
 library(patchwork)
-#library(DT)
-#library(reactable)
+library(reactable)
 ```
 
 ```{r constants}
@@ -52,19 +51,190 @@ GTDB_TAXRANKS    <- c('domain', 'phylum', 'class', 'order', 'family', 'genus', '
 ORDERED_TAXRANKS <- c('domain', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'strain', 'subspecies')
 BLAST6_COLNAMES  <- c('qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore')
 BLAST6_COLTYPES  <- 'ccdiiiiiiidd'
+ORDERED_SAMPLES  <- c(
+  'YC-4250-BIO73blank',  'YC-4250-BIO74water',  'YC-4250-BIO78water',  'YC-4250-BIO79water', 'YC-4250-BIO80water', 'YC-4250-BIO82water',
+  'YC-4250-BIO83water',  'YC-4250-BIO84water',  'YC-4250-BIO85water',  'YC-4250-BIO86water', 'YC-4250-BIO88water', 'YC-4250-BIO89water',
+  'YC-4250-BIO116water', 'YC-4250-BIO117water', 'YC-4250-BIO120water', 'YC-4249-BIO15sed',   'YC-4249-BIO16sed',   'YC-4249-BIO17sed',
+  'YC-4249-BIO18sed',    'YC-4249-BIO19sed',    'YC-4249-BIO20sed',    'YC-4249-BIO21sed',   'YC-4249-BIO23sed',   'YC-4249-BIO25sed',
+  'YC-4249-BIO27sed',    'YC-4249-BIO28sed',    'YC-4249-BIO1sed',     'YC-4249-BIO2sed',    'YC-4249-BIO3sed',    'YC-4249-BIO4sed',
+  'YC-4249-BIO5sed',     'YC-4249-BIO6sed',     'YC-4249-BIO7sed',     'YC-4249-BIO9sed',    'YC-4249-BIO11sed',   'YC-4249-BIO13sed',
+  'YC-4249-BIO14sed',    'YC-4249-BIO29sed',    'YC-4249-BIO30sed',    'YC-4249-BIO61sed',   'YC-4249-BIO62sed',   'YC-4249-BIO63sed',
+  'YC-4249-BIO64sed',    'YC-4249-BIO65sed',    'YC-4249-BIO67sed',    'YC-4249-BIO69sed',   'YC-4249-BIO71sed',   'YC-4249-BIO72sed'
+)
 ```
 
-```{r read-data}
-#| label: read-data
+```{r read-overall-stats}
+#| label: read-overall-stats
+overall_stats <- read_tsv('data/megahit.prokka.overall_stats.tsv.gz', col_types = cols(.default = col_integer(), sample = col_character())) %>%
+  mutate(
+    prop_non_contaminated = n_non_contaminated/n_post_trimming,
+    prop_mapped_contigs   = idxs_n_mapped/n_non_contaminated,
+    prop_mapped_features  = n_feature_count/n_non_contaminated
+  )
+```
+
+```{r read-counts}
+#| label: read-counts
+#| cache-lazy: false
+counts <- read_tsv('data/megahit.prokka.counts.tsv.gz', col_types = 'cciicicid')
+```
+
+```{r create-samples}
+#| label: create-samples
+
+# This should be a separate table, added to the repo
+samples <- readxl::read_excel('data/TRAWL24_RNA_sample_meta_data.xlsx', sheet = 'joint') %>%
+  mutate(sample = factor(sample, ordered = TRUE))
+```
+
+```{r read-emapper}
+#| label: read-emapper
+#| cache-lazy: false
+emapper <- read_tsv(
+  'data/megahit.prokka.emapper.tsv.gz',
+  col_types = cols(.default = col_character(), evalue = col_double(), score = col_double())
+)
+top_eggnogs <- emapper %>%
+  transmute(orf, e = str_remove(eggnog_ogs, ',.*'), cog_categories = str_split(cog_category, ',', simplify = TRUE)) %>%
+  #separate_wider_delim(e, names = c('eggnog', 't'), delim = '@') %>%
+  separate_wider_regex(e, c(eggnog = '.*', '@', taxonid = '.*', '\\|', taxon = '.*'))
+```
+
+```{r read-taxonomy}
+#| label: read-taxonomy
+#| cache-lazy: false
+taxonomy <- read_tsv('data/megahit.prokka.gtdb-r220.diamond.taxonomy.tsv.gz', col_types = 'ccdccccccccc') %>%
+  select(-strain, taxonomy) %>%
+  mutate(kingdom = domain, taxonomy = 'GTDB') %>%
+  union(
+    read_tsv('data/megahit.prokka.ncbi-refseq-20250115.diamond.taxonomy-taxdump.tsv.gz', col_types = 'ccdccccccccc') %>%
+      rename(domain = superkingdom) %>%
+      mutate(taxonomy = 'RefSeq')
+  ) %>%
+  # For ORFs with more than one hit, select the one with the lowest evalue (unfortunately, we don't have the score)
+  group_by(orf) %>%
+  filter(evalue == min(evalue)) %>%
+  ungroup() %>%
+  # For remaining duplicates, prefer GTDB over RefSeq
+  group_by(orf) %>%
+  filter(taxonomy == min(taxonomy)) %>%
+  ungroup()
+```
+
+```{r read-eukulele}
+#| label: read-eukulele
+eukulele <- read_tsv('data/megahit.prokka.gtdb.eukulele.taxonomy.tsv.gz', col_types = 'ccccccccccdic') %>%
+  mutate(database = 'GTDB') %>%
+  union(
+    read_tsv('data/megahit.prokka.mmetsp.eukulele.taxonomy.tsv.gz', col_types = 'ccccccccccdic') %>%
+      mutate(database = 'MMETSP')
+  ) %>%
+  union(
+    read_tsv('data/megahit.prokka.phylodb.eukulele.taxonomy.tsv.gz', col_types = 'ccccccccccdicc') %>%
+      select(-counts) %>%
+      mutate(database = 'PHYLODB')
+  ) %>%
+  # Keep the best scoring
+  group_by(orf) %>%
+  filter(max_score == max(max_score)) %>%
+  ungroup() %>%
+  # Remaining duplicates, keep in alphabetical preference: GTDB, MMETSP, PHYLODB
+  group_by(orf) %>%
+  filter(database == min(database)) %>%
+  ungroup()
+```
+
+```{r read-kofam}
+#| label: read-kofam
+#| cache-lazy: false
+kofam <- read_tsv('data/megahit.prokka.kofamscan-uniq.tsv.gz', col_types = 'ccdddc')
+```
+
+```{r read-prokka}
+#| label: read-prokka
+#| cache-lazy: false
+prokka <- read_tsv(
+  'data/megahit.prokka.prokka-annotations.tsv.gz',
+  col_types = cols(.default = col_character(), start = col_integer(), end = col_integer())
+)
+```
+
+```{r read-metabolisms}
+#| label: read-metabolisms
+metabolisms <- read_tsv('data/metabolisms.tsv', col_types = 'ccccc')
+```
+
+```{r create-nmdss}
+#| label: create-nmdss
+#| include: false
+nmdss <- list()
+create_nmds <- function(ds, k = 2, tm = 20) {
+  ds %>%
+    pivot_wider(names_from = taxon, values_from = tpm, values_fill = 0) %>%
+    column_to_rownames('sample') %>%
+    vegan::metaMDS(k = k, trymax = tm)
+}
+nmdss[['family']] <- counts %>%
+  anti_join(samples %>% filter(type == 'blank'), by = join_by(sample)) %>%
+  inner_join(taxonomy, by = join_by(orf)) %>%
+  filter(!is.na(family)) %>%
+  group_by(sample, family) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  rename(taxon = family) %>%
+  create_nmds()
+```
+
+```{r func-taxon-rank}
+#| label: func-taxon-rank
+taxon_rank <- function(r) {
+  counts %>%
+    inner_join(taxonomy %>% filter(!is.na({{ r }})), by = join_by(orf)) %>%
+    group_by({{ r }}, sample) %>%
+    summarise(tpm = sum(tpm), .groups = 'drop_last') %>%
+    summarise(total_tpm = sum(tpm), mean_tpm = mean(tpm), n = n()) %>%
+    mutate(total_rank = rank(desc(total_tpm)), mean_rank = rank(desc(mean_tpm)))
+}
+#taxon_rank(phylum) %>% filter(total_rank <= 12) %>% arrange(total_rank)
 ```
 
 # Version history
 
+* 20260127
+  - Add plot of (some) nitrogen-cycle genes
+  - Sort samples in Clare's order
+  
+* 20260120
+  - Annotation success plot at domain and functional level
+  - NMDS at family level plus phylum plot
+  
 # Summary
 
 # Introduction
 
 # Materials and Methods
+
+The 48 samples were *de novo* assembled, annotated and quantified with nf-core/metatdenovo (v. 1.3.0; @metatdenovo).
+I used MEGAHIT (v. 1.2.9; @megahit) for assembly and Prokka (v. 1.14.6; @prokka) together with all available functional
+annotation options: Prokka, eggNOG-mapper (v. 2.1.9; @emapper2) and Kofamscan (v. 1.3.0; @kofamscan).
+For taxonomy, I used both Diamond (v. 2.1.10; @diamond) and EUKulele (v. 2.1.2; @eukulele) with NCBI's RefSeq and GTDB (R09-RS220; @gtdb)
+for Diamond; and GTDB (R07-RS207; @gtdb), MMETSP (@mmetsp) and PhyloDB (@phylodb) for EUKulele.
+
+Data from the run is available at Dardel: `/cfs/klemming/projects/supr/snic2020-16-76/projects/trawl24_metatdenovo/results`.
+Files used in this document can be found in `results/summary_tables/`.
+
+## Metabolisms searched for
+
+I used the Kofamscan output to search for enzymes involved in interesting metabolisms (@tbl-metabolisms).
+
+```{r tbl-metabolisms}
+#| label: tbl-metabolisms
+#| tbl-cap: '**KEGG orthologs assigned to metabolisms.** *Note* that hits to KOs named "Methane monooxygenase" were assigned to ammonium oxidation, see comment in @fig-nitrogen-cycle caption.'
+#| cache: false
+metabolisms %>%
+  arrange(metabolism, process, step, ko) %>%
+  reactable(searchable = TRUE, defaultPageSize = 5)
+```
+
 
 ## R and packages
 
@@ -80,6 +250,151 @@ cite_packages(output = "table", pkgs = "Session", out.dir = getwd()) %>%
 ```
 
 # Results
+
+## Annotation success
+
+Weighted by tpm (gene-length corrected relative abundances of reads mapping back to the assembly), the majority of ORFs were not taxonomically
+annotated even at domain level using the Diamond annotation (@fig-annotation-success A).
+The water samples were better than the sediment samples, with several reaching almost half annotated.
+Bacteria dominated all samples, with some samples reaching discernible proportions of archaea, and eukaryotes found in two water samples.
+The EUKulele annotation (@fig-annotation-success B) was slightly better than the Diamond annotation.
+We know from before that it is less conservative.
+A parameter can be lowered for the Diamond assignment to make it less conservative.
+
+Prokka annotated a total of `r prokka %>% filter(feature == 'CDS', product != 'hypothetical protein') %>% nrow()` (excluding "hypothetical protein"),
+Kofamscan `r nrow(kofam)` and the eggNOG-mapper `r nrow(top_eggnogs)` ORFs.
+Weighted by tpm, a similar proportion of ORFs compared to the domain-annotated, were annotated with a function, with around half of water reads 
+and a third of sediment reads receiving any function (@fig-annotation-success C).
+
+```{r fig-annotation-success}
+#| label: fig-annotation-success
+#| fig-cap: '**Taxonomic and functional annotation success.** Domain assignment of samples in A) the Diamond annotation and B) the EUKulele annotation. C) Functional annotation success. ORFs annotated as "hypothetical protein" by Prokka removed.'
+#| fig-height: 12
+p0 <- counts %>%
+  inner_join(taxonomy %>% filter(!is.na(domain)), by = join_by(orf)) %>%
+  group_by(sample, domain) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  inner_join(samples %>% filter(type != 'blank'), by = join_by(sample)) %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) %>%
+  ggplot(aes(x = sample, y = tpm, fill = domain)) +
+  geom_col() +
+  facet_wrap(~type, scales = 'free_x', space = 'free_x') +
+  theme(
+    axis.text.x = element_text(angle = 65, hjust = 1)
+  ) +
+  lims(y = c(0, 1e6))
+p1 <- counts %>%
+  inner_join(
+    eukulele %>%
+      mutate(domain = ifelse(database == 'MMETSP', 'Eukaryota', domain)),
+    by = join_by(orf)
+  ) %>%
+  group_by(sample, domain) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  inner_join(samples %>% filter(type != 'blank'), by = join_by(sample)) %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) %>%
+  ggplot(aes(x = sample, y = tpm, fill = domain)) +
+  geom_col() +
+  facet_wrap(~type, scales = 'free_x', space = 'free_x') +
+  theme(
+    axis.text.x = element_text(angle = 65, hjust = 1)
+  ) +
+  lims(y = c(0, 1e6))
+p2 <- counts %>%
+  inner_join(
+    prokka %>% 
+      filter(feature == 'CDS', product != 'hypothetical protein') %>%
+      transmute(orf, annotation = 'Prokka') %>%
+      union(top_eggnogs %>% transmute(orf, annotation = 'eggNOG')) %>%
+      union(kofam %>% transmute(orf, annotation = 'KOfam')) %>%
+      group_by(orf) %>%
+      arrange(annotation) %>%
+      summarise(annotations = str_c(annotation, collapse = '+')),
+    by = join_by(orf)
+  ) %>%
+  group_by(annotations, sample) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  inner_join(samples %>% filter(type != 'blank'), by = join_by(sample)) %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) %>%
+  ggplot(aes(x = sample, y = tpm, fill = annotations)) +
+  geom_col() +
+  facet_wrap(~type, scales = 'free_x', space = 'free_x') +
+  theme(
+    axis.text.x = element_text(angle = 65, hjust = 1)
+  ) +
+  lims(y = c(0, 1e6))
+p0 / p1 / p2 +
+  plot_annotation(tag_levels = 'A')
+```
+
+Four of the water samples separated from all other samples (@fig-family-nmds A).
+Two of the four (the two with the highest MDS1 values) had a much smaller amount reads annotated at phylum level, one had a larger proportion of 
+*Thermoproteota* (Archaea) and one was, at phylum level indistinguishable from the non-outliers (@fig-family-nmds B).
+The other water samples separated from sediment samples but to a lesser degree.
+
+There's a progression over depth among the sediment samples (@fig-family-nmds A).
+
+```{r fig-family-nmds}
+#| label: fig-family-nmds
+#| fig-cap: '**NMDS of data summed at family level and phylum distribution.** A) NMDS, B) phylum distribution with outliers marked with "*". This used the Diamond GTDB taxonomy for ORFs when this had a lower e-value than the Diamond RefSeq, and otherwise the latter. ORFs without family annotation removed. The sample named "blank" was also removed prior to calculating the NMDS. "Depth" is meters above sea bed for water samples and sediment depth in cm for sediment samples.'
+#| fig-height: 12
+#| warning: false
+nmdss[['family']]$points %>%
+  as.data.frame() %>%
+  rownames_to_column('sample') %>%
+  inner_join(samples, by = join_by(sample)) %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) -> t
+p0 <- t %>%
+  ggplot(aes(x = MDS1, y = MDS2)) +
+  geom_point(aes(colour = depth, shape = type), size = 2) +
+  geom_label(x = min(t %>% pull(MDS1)) + 0.25, y = max(t %>% pull(MDS2)) - 0.1, label = sprintf("Stress: %0.2f", nmdss[['family']]$stress)) +
+  ggrepel::geom_label_repel(data = t %>% filter(MDS1 > 0, MDS2 < -0.5), aes(label = sample)) +
+  scale_colour_viridis_c('Depth')
+p1 <- counts %>%
+  inner_join(taxonomy, by = join_by(orf)) %>%
+  group_by(domain, phylum, sample) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  left_join(taxon_rank(phylum) %>% filter(mean_rank <= 12) %>% transmute(phylum, taxon = phylum), by = join_by(phylum)) %>%
+  inner_join(samples %>% filter(type != 'blank'), by = join_by(sample)) %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) %>%
+  ggplot(aes(x = sample, y = tpm, fill = taxon)) +
+  geom_col() +
+  scale_fill_brewer('Phylum', palette = 'Paired', na.value = 'grey') +
+  facet_wrap(~type, scales = 'free_x', space = 'free_x') +
+  theme(
+    axis.text.x = element_text(angle = 65, hjust = 1)
+  ) +
+  lims(y = c(0, 1e6))
+p0 / p1 +
+  plot_annotation(tag_levels = 'A')
+```
+
+## Nitrogen cycle genes
+
+Nitrogen processing was dominated by denitrification in most water samples, suggesting anoxic conditions (@fig-nitrogen-cycle).
+Some of the ammonium oxidation in sediment samples could well be methane oxidation, see note in figure caption.
+In any case, the enzyme is oxygen-dependent, suggesting oxygen presence in some sediment samples (or presence of bacteria performing anaerobic
+methane oxidation with this enzyme, possibly by oxygen-production from nitrite [@ettwig2010a]).
+
+```{r fig-nitrogen-cycle}
+#| label: fig-nitrogen-cycle
+#| fig-cap: '**Nitrogen metabolism.** *Note 1*: The highly varying y-axes. *Note 2*: Genes assigned to ammonium oxidation here were annotated as "Methane monooxygenase component". Ammonium monooxygenase is homologous with soluble methane monooxygenase and at least the archaeal version of the latter usually gets annotated as methane monooxygenase. Moreover, hits often do not get a useful taxonomic annotation. To be more certain, one has to blast the ORF sequences. Hits that are assigned to  *Nitrosopumilaceae*.'
+metabolisms %>%
+  filter(metabolism == 'nitrogen') %>%
+  select(-ko_definition) %>%
+  inner_join(kofam, by = join_by(ko)) %>%
+  inner_join(counts, by = join_by(orf)) %>%
+  group_by(process, step, sample) %>%
+  summarise(tpm = sum(tpm), .groups = 'drop') %>%
+  mutate(sample = factor(sample, levels = ORDERED_SAMPLES, ordered = TRUE)) %>%
+  ggplot(aes(x = sample, y = tpm, fill = step)) +
+  geom_col() +
+  facet_wrap(~process, scales = 'free_y', ncol = 1) +
+  labs(x = '', fill = 'Metabolic step') +
+  theme(
+    axis.text.x = element_text(angle = 65, hjust = 1)
+  )
+```
 
 # Discussion
 

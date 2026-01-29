@@ -1,4 +1,4 @@
-FETCH_DARDEL = rsync -avhP --size-only dardel:/cfs/klemming/projects/supr/snic2020-16-76/projects/trawl24_metatdenovo/results/summary_tables/$@ ./.
+FETCH_DARDEL = rsync -avhP --size-only dardel:/cfs/klemming/projects/supr/trawl-2025/TRAWL24/trawl24_metatdenovo/results/summary_tables/$@ ./.
 
 all: megahit.prokka.counts.tsv.gz megahit.prokka.gtdb.eukulele.taxonomy.tsv.gz megahit.prokka.mmetsp.eukulele.taxonomy.tsv.gz megahit.prokka.phylodb.eukulele.taxonomy.tsv.gz megahit.prokka.kofamscan.tsv.gz megahit.prokka.ncbi-refseq-20250115.diamond.taxonomy-taxdump.tsv.gz megahit.prokka.overall_stats.tsv.gz megahit.prokka.emapper.tsv.gz megahit.prokka.gtdb-r220.diamond.taxonomy.tsv.gz megahit.prokka.kofamscan-uniq.tsv.gz megahit.prokka.ncbi-refseq-20250115.diamond.taxonomy.tsv.gz megahit.prokka.prokka-annotations.tsv.gz
 
